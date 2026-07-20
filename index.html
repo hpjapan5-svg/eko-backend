@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="uz">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Eco Monitoring Uz - Havo Sifati</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head>
+  <body class="bg-slate-900 text-slate-100 min-h-screen font-sans">
+    <!-- Header -->
+    <header
+      class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50"
+    >
+      <div
+        class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center"
+      >
+        <div class="flex items-center space-x-3">
+          <span class="text-3xl">🌿</span>
+          <div>
+            <h1
+              class="text-xl font-bold bg-gradient-to-r from-emerald-400 to-teal-300 bg-clip-text text-transparent"
+            >
+              Eco Monitoring Uz
+            </h1>
+            <p class="text-xs text-slate-400">
+              O'zbekiston shaharlari havo sifati monitoringi
+            </p>
+          </div>
+        </div>
+        <button
+          onclick="loadData()"
+          class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm px-4 py-2 rounded-xl transition font-medium flex items-center gap-2"
+        >
+          <span>🔄</span> Yangilash
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 py-8 space-y-8">
+      <!-- Loading / Status -->
+      <div id="loader" class="text-center py-12">
+        <div
+          class="inline-block animate-spin rounded-full h-10 w-10 border-4 border-emerald-500 border-t-transparent"
+        ></div>
+        <p class="mt-3 text-slate-400">Serverdan ma'lumotlar yuklanmoqda...</p>
+      </div>
+
+      <!-- Error Message -->
+      <div
+        id="error"
+        class="hidden bg-red-900/40 border border-red-700 text-red-200 p-4 rounded-xl text-center"
+      >
+        ⚠️ Backend bilan bog'lanishda xatolik yuz berdi. Server ishlayotganini
+        tekshiring.
+      </div>
+
+      <!-- Cards Section -->
+      <section
+        id="cards-container"
+        class="hidden grid grid-cols-1 md:grid-cols-3 gap-6"
+      >
+        <!-- Shahar kartochkalari JavaScript orqali dinamik qo'shiladi -->
+      </section>
+
+      <!-- Chart Section -->
+      <section
+        id="chart-section"
+        class="hidden bg-slate-800/60 border border-slate-700/50 p-6 rounded-2xl shadow-xl"
+      >
+        <h2
+          class="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2"
+        >
+          📊 PM2.5 va PM10 Ko'rsatkichlari Solishtirmasi (µg/m³)
+        </h2>
+        <div class="relative h-72 w-full">
+          <canvas id="airChart"></canvas>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      // Backend API manzili
+      const API_URL = "https://eko-backend-zhui.onrender.com/air-quality";
+      let airChartInstance = null;
+
+      // PM2.5 bo'yicha havo sifatini baholash
+      function getStatusInfo(pm25) {
+        if (pm25 <= 12) {
+          return {
+            label: "Toza",
+            color: "text-emerald-400",
+            bg: "bg-emerald-950/40 border-emerald-800",
+          };
+        } else if (pm25 <= 35.4) {
+          return {
+            label: "O'rtacha",
+            color: "text-yellow-400",
+            bg: "bg-yellow-950/40 border-yellow-800",
+          };
+        } else {
+          return {
+            label: "Zararli",
+            color: "text-red-400",
+            bg: "bg-red-950/40 border-red-800",
+          };
+        }
+      }
+
+      async function loadData() {
+        const loader = document.getElementById("loader");
+        const errorDiv = document.getElementById("error");
+        const cardsContainer = document.getElementById("cards-container");
+        const chartSection = document.getElementById("chart-section");
+
+        loader.classList.remove("hidden");
+        errorDiv.classList.add("hidden");
+
+        try {
+          const response = await fetch(API_URL);
+          if (!response.ok) throw new Error("Server xatosi");
+
+          const data = await response.json();
+          loader.classList.add("hidden");
+
+          if (data.length === 0) {
+            errorDiv.textContent = "Hozircha ma'lumotlar yo'q.";
+            errorDiv.classList.remove("hidden");
+            return;
+          }
+
+          // Har bir shahar bo'yicha eng oxirgi (eng yangi) ma'lumotni saralab olish
+          const latestCities = {};
+          data.forEach((item) => {
+            if (
+              !latestCities[item.city] ||
+              new Date(item.created_at) >
+                new Date(latestCities[item.city].created_at)
+            ) {
+              latestCities[item.city] = item;
+            }
+          });
+
+          const cityList = Object.values(latestCities);
+
+          // 1. Kartochkalarni chizish
+          cardsContainer.innerHTML = "";
+          cityList.forEach((cityData) => {
+            const status = getStatusInfo(cityData.pm2_5);
+
+            cardsContainer.innerHTML += `
+            <div class="border rounded-2xl p-5 ${status.bg} shadow-lg backdrop-blur transition-all duration-300 hover:scale-[1.02]">
+              <div class="flex justify-between items-start mb-4">
+                <div>
+                  <h3 class="text-2xl font-bold text-white">${cityData.city}</h3>
+                  <p class="text-xs text-slate-400 mt-1">
+                    🕒 ${new Date(cityData.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  </p>
+                </div>
+                <span class="px-3 py-1 rounded-full text-xs font-semibold ${status.color} bg-slate-900/60 border border-current">
+                  ${status.label}
+                </span>
+              </div>
+
+              <div class="grid grid-cols-2 gap-3 mt-4">
+                <div class="bg-slate-900/50 p-3 rounded-xl border border-slate-700/50">
+                  <span class="text-xs text-slate-400">PM2.5</span>
+                  <p class="text-xl font-bold text-slate-100">${cityData.pm2_5} <span class="text-xs font-normal text-slate-400">µg/m³</span></p>
+                </div>
+                <div class="bg-slate-900/50 p-3 rounded-xl border border-slate-700/50">
+                  <span class="text-xs text-slate-400">PM10</span>
+                  <p class="text-xl font-bold text-slate-100">${cityData.pm10} <span class="text-xs font-normal text-slate-400">µg/m³</span></p>
+                </div>
+                <div class="bg-slate-900/50 p-3 rounded-xl border border-slate-700/50">
+                  <span class="text-xs text-slate-400">NO₂</span>
+                  <p class="text-lg font-semibold text-slate-200">${cityData.no2 ?? 0} <span class="text-xs font-normal text-slate-400">µg/m³</span></p>
+                </div>
+                <div class="bg-slate-900/50 p-3 rounded-xl border border-slate-700/50">
+                  <span class="text-xs text-slate-400">CO</span>
+                  <p class="text-lg font-semibold text-slate-200">${cityData.co ?? 0} <span class="text-xs font-normal text-slate-400">µg/m³</span></p>
+                </div>
+              </div>
+            </div>
+          `;
+          });
+
+          cardsContainer.classList.remove("hidden");
+
+          // 2. Grafikni (Chart.js) yasash
+          renderChart(cityList);
+          chartSection.classList.remove("hidden");
+        } catch (err) {
+          console.error(err);
+          loader.classList.add("hidden");
+          errorDiv.classList.remove("hidden");
+        }
+      }
+
+      function renderChart(cityList) {
+        const ctx = document.getElementById("airChart").getContext("2d");
+
+        const labels = cityList.map((c) => c.city);
+        const pm25Data = cityList.map((c) => c.pm2_5);
+        const pm10Data = cityList.map((c) => c.pm10);
+
+        if (airChartInstance) {
+          airChartInstance.destroy();
+        }
+
+        airChartInstance = new Chart(ctx, {
+          type: "bar",
+          data: {
+            labels: labels,
+            datasets: [
+              {
+                label: "PM2.5",
+                data: pm25Data,
+                backgroundColor: "rgba(52, 211, 153, 0.85)",
+                borderRadius: 8,
+              },
+              {
+                label: "PM10",
+                data: pm10Data,
+                backgroundColor: "rgba(96, 165, 250, 0.85)",
+                borderRadius: 8,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { labels: { color: "#94a3b8" } },
+            },
+            scales: {
+              x: { ticks: { color: "#94a3b8" }, grid: { display: false } },
+              y: { ticks: { color: "#94a3b8" }, grid: { color: "#334155" } },
+            },
+          },
+        });
+      }
+
+      // Sahifa yuklanganda ma'lumotlarni tortish
+      window.onload = loadData;
+    </script>
+  </body>
+</html>

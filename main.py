@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from contextlib import asynccontextmanager
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -45,15 +46,14 @@ async def fetch_air_quality_job():
     finally:
         db.close()
 
-# 3. Server ishga tushganda taymerni (scheduler) yoqish
+# 3. Server ishga tushganda taymerni yoqish
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scheduler = AsyncIOScheduler()
-    # Har 1 soatda bir marta avtomatik ishlaydi
     scheduler.add_job(fetch_air_quality_job, 'interval', hours=1)
     scheduler.start()
     
-    # Server yonishi bilan birinchi marta ma'lumotlarni darhol tortadi
+    # Server yonishi bilan birinchi marta ma'lumotlarni tortadi
     await fetch_air_quality_job()
     
     yield
@@ -62,6 +62,15 @@ async def lifespan(app: FastAPI):
 # 4. FastAPI ilovasi
 app = FastAPI(title="Eco Monitoring Uz API", lifespan=lifespan)
 
+# 🌐 CORS MIDDLEWARE (Frontend va Vercel/Netlify uchun ruxsat)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Istalgan frontend domenidan kelgan so'rovlarga ruxsat beradi
+    allow_credentials=True,
+    allow_methods=["*"],  # GET, POST va boshqa barcha metodlarga ruxsat
+    allow_headers=["*"],
+)
+
 # Base jadvallarini yaratish
 models.Base.metadata.create_all(bind=database.engine)
 
@@ -69,9 +78,7 @@ models.Base.metadata.create_all(bind=database.engine)
 def home():
     return {"message": "Eco Monitoring Uz API muvaffaqiyatli ishlayapti!"}
 
-# 5. Ikkala URL varianti ham 404 xatosi bermasligi uchun qilingan endpoint
 @app.get("/air-quality")
 @app.get("/air-quality/")
 def get_air_quality(db: Session = Depends(database.get_db)):
-    # Bazadagi eng oxirgi saqlangan ma'lumotlarni qaytaradi
     return db.query(models.AirQuality).order_by(models.AirQuality.id.desc()).all()
