@@ -8,28 +8,58 @@ import httpx
 import database
 import models
 
-# 1. Shaharlar koordinatalari
+# O'zbekistonning barcha viloyat markazlari koordinatalari
 CITIES = {
-    "Toshkent": {"lat": 41.2995, "lon": 69.2401},
+    "Toshkent shahri": {"lat": 41.2995, "lon": 69.2401},
+    "Andijon": {"lat": 40.7821, "lon": 72.3442},
+    "Buxoro": {"lat": 39.7747, "lon": 64.4286},
+    "Farg'ona": {"lat": 40.3842, "lon": 71.7843},
+    "Jizzax": {"lat": 40.1158, "lon": 67.8422},
+    "Namangan": {"lat": 41.0011, "lon": 71.6683},
+    "Navoiy": {"lat": 40.0844, "lon": 65.3792},
+    "Qarshi": {"lat": 38.8605, "lon": 65.7890},
     "Samarqand": {"lat": 39.6542, "lon": 66.9597},
-    "Farg'ona": {"lat": 40.3842, "lon": 71.7843}
+    "Guliston": {"lat": 40.4897, "lon": 68.7842},
+    "Termiz": {"lat": 37.2242, "lon": 67.2783},
+    "Nurofshton": {"lat": 41.0422, "lon": 69.3583}, # Toshkent viloyati
+    "Urganch": {"lat": 41.5503, "lon": 60.6314},
+    "Nukus": {"lat": 42.4602, "lon": 59.6180}        # Qoraqalpog'iston R.
 }
 
-# 2. Open-Meteo API'dan ma'lumot tortib bazaga yozuvchi background funksiya
 async def fetch_air_quality_job():
     db: Session = database.SessionLocal()
     try:
+        lats = ",".join([str(coords["lat"]) for coords in CITIES.values()])
+        lons = ",".join([str(coords["lon"]) for coords in CITIES.values()])
+        
+        url = (
+            f"https://air-quality-api.open-meteo.com/v1/air-quality?"
+            f"latitude={lats}&longitude={lons}"
+            f"&current=pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide"
+        )
+
         async with httpx.AsyncClient() as client:
-            for city_name, coords in CITIES.items():
-                url = (
-                    f"https://air-quality-api.open-meteo.com/v1/air-quality?"
-                    f"latitude={coords['lat']}&longitude={coords['lon']}"
-                    f"&current=pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide"
-                )
-                response = await client.get(url)
-                if response.status_code == 200:
-                    data = response.json().get("current", {})
-                    
+            response = await client.get(url)
+            if response.status_code == 200:
+                res_data = response.json()
+                
+                # Agar bir nechta shahar yuborilsa Open-Meteo ro'yxat qaytaradi
+                if isinstance(res_data, list):
+                    for idx, city_name in enumerate(CITIES.keys()):
+                        data = res_data[idx].get("current", {})
+                        air_data = models.AirQuality(
+                            city=city_name,
+                            pm2_5=data.get("pm2_5"),
+                            pm10=data.get("pm10"),
+                            co=data.get("carbon_monoxide"),
+                            no2=data.get("nitrogen_dioxide"),
+                            so2=data.get("sulphur_dioxide")
+                        )
+                        db.add(air_data)
+                else:
+                    # Yagona shahar qaytsa
+                    data = res_data.get("current", {})
+                    city_name = list(CITIES.keys())[0]
                     air_data = models.AirQuality(
                         city=city_name,
                         pm2_5=data.get("pm2_5"),
@@ -39,39 +69,33 @@ async def fetch_air_quality_job():
                         so2=data.get("sulphur_dioxide")
                     )
                     db.add(air_data)
-            db.commit()
-            print("✅ Open-Meteo ma'lumotlari muvaffaqiyatli saqlandi!")
+
+                db.commit()
+                print("✅ Barcha 14 ta hudud bo'yicha havo ma'lumotlari saqlandi!")
     except Exception as e:
         print(f"❌ Ma'lumot yig'ishda xatolik: {e}")
     finally:
         db.close()
 
-# 3. Server ishga tushganda taymerni yoqish
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scheduler = AsyncIOScheduler()
     scheduler.add_job(fetch_air_quality_job, 'interval', hours=1)
     scheduler.start()
-    
-    # Server yonishi bilan birinchi marta ma'lumotlarni tortadi
     await fetch_air_quality_job()
-    
     yield
     scheduler.shutdown()
 
-# 4. FastAPI ilovasi
 app = FastAPI(title="Eco Monitoring Uz API", lifespan=lifespan)
 
-# 🌐 CORS MIDDLEWARE (Frontend va Vercel/Netlify uchun ruxsat)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Istalgan frontend domenidan kelgan so'rovlarga ruxsat beradi
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # GET, POST va boshqa barcha metodlarga ruxsat
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Base jadvallarini yaratish
 models.Base.metadata.create_all(bind=database.engine)
 
 @app.get("/")
