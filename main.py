@@ -1,80 +1,75 @@
-from fastapi import FastAPI, Depends, HTTPException
-from pydantic import BaseModel
-from datetime import datetime
-from typing import List
-from sqlalchemy import Column, Integer, Float, String, DateTime
+from fastapi import FastAPI, Depends
 from sqlalchemy.orm import Session
-from database import engine, Base, get_db
+from contextlib import asynccontextmanager
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import httpx
 
-# Bazada jadval yaratish
-Base.metadata.create_all(bind=engine)
+import database, models # o'zingizning baza va modellar faylingiz
 
-# --- SQLALCHEMY DATABASE MODELI ---
-class AirQualityDB(Base):
-    __tablename__ = "air_quality_logs"
+# Shaharlar koordinatalari
+CITIES = {
+    "Toshkent": {"lat": 41.2995, "lon": 69.2401},
+    "Samarqand": {"lat": 39.6542, "lon": 66.9597},
+    "Farg'ona": {"lat": 40.3842, "lon": 71.7843}
+}
 
-    id = Column(Integer, primary_key=True, index=True)
-    sensor_id = Column(String, index=True)
-    pm25 = Column(Float)
-    pm10 = Column(Float)
-    aqi_status = Column(String)
-    timestamp = Column(DateTime, default=datetime.now)
+# Open-Meteo API'dan ma'lumot tortuvchi funksiya
+async def fetch_air_quality_job():
+    db: Session = database.SessionLocal()
+    try:
+        async with httpx.AsyncClient() as client:
+            for city_name, coords in CITIES.items():
+                url = (
+                    f"https://air-quality-api.open-meteo.com/v1/air-quality?"
+                    f"latitude={coords['lat']}&longitude={coords['lon']}"
+                    f"&current=pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide"
+                )
+                response = await client.get(url)
+                if response.status_code == 200:
+                    data = response.json().get("current", {})
+                    
+                    # Baza modeliga moslab saqlash
+                    air_data = models.AirQuality(
+                        city=city_name,
+                        pm2_5=data.get("pm2_5"),
+                        pm10=data.get("pm10"),
+                        co=data.get("carbon_monoxide"),
+                        no2=data.get("nitrogen_dioxide"),
+                        so2=data.get("sulphur_dioxide")
+                    )
+                    db.add(air_data)
+            db.commit()
+            print("✅ Havo sifati ma'lumotlari muvaffaqiyatli yangilandi va bazaga saqlandi!")
+    except Exception as e:
+        print(f"❌ Ma'lumotlarni olishda xatolik: {e}")
+    finally:
+        db.close()
 
-# --- PYDANTIC SCHEMAS ---
-class SensorData(BaseModel):
-    sensor_id: str
-    pm25: float
-    pm10: float
+# FastAPI ishga tushganda scheduler'ni yoqish
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler = AsyncIOScheduler()
+    # Har 1 soatda bir marta ishlaydi (interval: hours=1)
+    # Sinash uchun seconds=30 qilib tekshirishingiz ham mumkin
+    scheduler.add_job(fetch_air_quality_job, 'interval', hours=1)
+    scheduler.start()
+    
+    # Server yoqilishi bilan darhol birinchi marta ma'lumotni tortadi
+    await fetch_air_quality_job()
+    
+    yield
+    scheduler.shutdown()
 
-class AirQualityResponse(SensorData):
-    id: int 
-    timestamp: datetime
-    aqi_status: str
+app = FastAPI(title="Eco Monitoring Uz API", lifespan=lifespan)
 
-    class Config:
-        from_attributes = True
+# Baza jadvalini yaratish
+models.Base.metadata.create_all(bind=database.engine)
 
-app = FastAPI(title="O'zbekistonda Havo Sifati API (Database bilan)")
+@app.get("/")
+def home():
+    return {"message": "Eco Monitoring API ishlayapti!"}
 
-def calculate_aqi_status(pm25: float) -> str:
-    if pm25 <= 12.0:
-        return "Yaxshi (Good) 😊"
-    elif pm25 <= 35.4:
-        return "Qoniqarli (Moderate) 😐"
-    elif pm25 <= 55.4:
-        return "Nozik guruhlar uchun zararli 😷"
-    else: 
-        return "Xavfli / Nosog'lom 🚨"
-
-# --- API ENDPOINT'LAR ---
-
-# A. Datchikdan kelgan ma'lumotni BAZAGA SAQLASH
-@app.post("/api/v1/telemetry", response_model=AirQualityResponse)
-def receive_sensor_data(data: SensorData, db: Session = Depends(get_db)):
-    status = calculate_aqi_status(data.pm25)
-
-    # Bazaga yangi qator qo'shamiz
-    db_entry = AirQualityDB(
-        sensor_id=data.sensor_id,
-        pm25=data.pm25,
-        pm10=data.pm10,
-        aqi_status=status
-    )
-    db.add(db_entry)
-    db.commit()
-    db.refresh(db_entry)
-
-    return db_entry
-
-# B. BAZADAN eng oxirgi ko'rsatkichni olish
-@app.get("/api/v1/air-quality/latest", response_model=AirQualityResponse)
-def get_latest_data(db: Session = Depends(get_db)):
-    latest = db.query(AirQualityDB).order_by(AirQualityDB.id.desc()).first()
-    if not latest:
-        raise HTTPException(status_code=404, detail="Bazada hali ma'lumot yo'q.")
-    return latest
-
-# C. Bazadagi barcha tarixlarni olish (Grafiklar uchun)
-@app.get("/api/v1/air-quality/history", response_model=List[AirQualityResponse])
-def get_history(db: Session = Depends(get_db)):
-    return db.query(AirQualityDB).all()
+@app.get("/air-quality/")
+def get_air_quality(db: Session = Depends(database.get_db)):
+    # Bazadagi oxirgi saqlangan ma'lumotlarni qaytaradi
+    return db.query(models.AirQuality).order_by(models.AirQuality.id.desc()).all()

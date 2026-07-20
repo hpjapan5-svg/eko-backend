@@ -1,22 +1,16 @@
-from sqlalchemy import create_engine 
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import Column, Integer, String, Float, DateTime
+from datetime import datetime
+from database import Base
 
-# SQLite faylli baza yaratadi (server papkasida eko_data.db fayli paydo bo'ladi)
-SQLALCHEMY_DATABASE_URL = "sqlite:///./eko_data.db"
+class AirQuality(Base):
+    __tablename__ = "air_quality"
 
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
-)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-Base = declarative_base()
-
-# Bazaga ulanish sessiyasini olish
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    id = Column(Integer, primary_key=True, index=True)
+    city = Column(String, index=True)
+    pm2_5 = Column(Float)
+    pm10 = Column(Float)
+    co = Column(Float)
+    no2 = Column(Float)
+    so2 = Column(Float)
+    created_at = Column(DateTime, default=datetime.utcnow)
     
