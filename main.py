@@ -8,7 +8,7 @@ import httpx
 import database
 import models
 
-# O'zbekistonning barcha viloyat markazlari koordinatalari
+# 14 ta hudud koordinatalari
 CITIES = {
     "Toshkent shahri": {"lat": 41.2995, "lon": 69.2401},
     "Andijon": {"lat": 40.7821, "lon": 72.3442},
@@ -21,9 +21,9 @@ CITIES = {
     "Samarqand": {"lat": 39.6542, "lon": 66.9597},
     "Guliston": {"lat": 40.4897, "lon": 68.7842},
     "Termiz": {"lat": 37.2242, "lon": 67.2783},
-    "Nurofshton": {"lat": 41.0422, "lon": 69.3583}, # Toshkent viloyati
+    "Nurafshon": {"lat": 41.0422, "lon": 69.3583},
     "Urganch": {"lat": 41.5503, "lon": 60.6314},
-    "Nukus": {"lat": 42.4602, "lon": 59.6180}        # Qoraqalpog'iston R.
+    "Nukus": {"lat": 42.4602, "lon": 59.6180}
 }
 
 async def fetch_air_quality_job():
@@ -43,7 +43,6 @@ async def fetch_air_quality_job():
             if response.status_code == 200:
                 res_data = response.json()
                 
-                # Agar bir nechta shahar yuborilsa Open-Meteo ro'yxat qaytaradi
                 if isinstance(res_data, list):
                     for idx, city_name in enumerate(CITIES.keys()):
                         data = res_data[idx].get("current", {})
@@ -56,22 +55,8 @@ async def fetch_air_quality_job():
                             so2=data.get("sulphur_dioxide")
                         )
                         db.add(air_data)
-                else:
-                    # Yagona shahar qaytsa
-                    data = res_data.get("current", {})
-                    city_name = list(CITIES.keys())[0]
-                    air_data = models.AirQuality(
-                        city=city_name,
-                        pm2_5=data.get("pm2_5"),
-                        pm10=data.get("pm10"),
-                        co=data.get("carbon_monoxide"),
-                        no2=data.get("nitrogen_dioxide"),
-                        so2=data.get("sulphur_dioxide")
-                    )
-                    db.add(air_data)
-
                 db.commit()
-                print("✅ Barcha 14 ta hudud bo'yicha havo ma'lumotlari saqlandi!")
+                print("✅ MVP: Open-Meteo ma'lumotlari muvaffaqiyatli yangilandi!")
     except Exception as e:
         print(f"❌ Ma'lumot yig'ishda xatolik: {e}")
     finally:
@@ -86,7 +71,7 @@ async def lifespan(app: FastAPI):
     yield
     scheduler.shutdown()
 
-app = FastAPI(title="Eco Monitoring Uz API", lifespan=lifespan)
+app = FastAPI(title="Eco Monitoring Uz - MVP API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -100,7 +85,11 @@ models.Base.metadata.create_all(bind=database.engine)
 
 @app.get("/")
 def home():
-    return {"message": "Eco Monitoring Uz API muvaffaqiyatli ishlayapti!"}
+    return {
+        "status": "online",
+        "project": "Eco Monitoring Uz MVP",
+        "coverage": "O'zbekistonning 14 ta asosiy hududi"
+    }
 
 @app.get("/air-quality")
 @app.get("/air-quality/")
